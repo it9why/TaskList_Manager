@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A local, Trello-style personal task manager.">
+  <title>Task Manager</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1 class="app-title">📋 Task Manager</h1>
+    <div class="header-controls">
+      <input type="search" id="searchInput" class="search-input" placeholder="Search tasks…" aria-label="Search tasks">
+      <select id="themeSelect" class="theme-select" title="Layout theme" aria-label="Layout theme">
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+        <option value="ocean">Ocean</option>
+        <option value="sepia">Sepia</option>
+      </select>
+      <button id="backgroundBtn" class="btn btn-secondary" title="Change background">🖼 Background</button>
+      <button id="recycleBinBtn" class="btn btn-secondary" title="Recycle Bin">🗑 Recycle</button>
+      <button id="addColumnBtn" class="btn btn-secondary" title="Add a column">＋ Column</button>
+      <button id="exportBtn" class="btn btn-secondary" title="Export tasks to JSON">⬇ Export</button>
+      <button id="importBtn" class="btn btn-secondary" title="Import tasks from JSON">⬆ Import</button>
+    </div>
+  </header>
+
+  <div class="active-filter-bar" id="activeFilterBar" hidden>
+    <span>Tag filter:</span>
+    <span id="activeFilterTag" class="filter-tag"></span>
+    <button id="clearTagFilter" class="btn btn-secondary btn-small">✕ Clear</button>
+  </div>
+
+  <main id="board" class="board"></main>
+
+  <!-- Card editor modal -->
+  <div class="modal-overlay" id="cardModal" hidden>
+    <div class="modal">
+      <h2 id="cardModalTitle">New Task</h2>
+      <form id="cardForm">
+        <input type="hidden" id="cardId">
+        <input type="hidden" id="cardColumnId">
+        <label>
+          Title <span class="required">*</span>
+          <input type="text" id="cardTitle" required maxlength="200" placeholder="What needs to be done?">
+        </label>
+        <label>
+          Description
+          <textarea id="cardDescription" rows="4" placeholder="Add details…"></textarea>
+        </label>
+        <div class="modal-section">
+          <div class="section-head"><h3>Progress</h3></div>
+          <div class="draft-add-row">
+            <textarea id="progressText" rows="2" placeholder="Add progress note…"></textarea>
+            <input type="date" id="progressDate">
+            <button type="button" class="btn btn-secondary btn-small" id="addProgressBtn">＋ Add</button>
+          </div>
+          <ul class="draft-list" id="progressList"></ul>
+        </div>
+
+        <div class="modal-section">
+          <div class="section-head"><h3>Links</h3></div>
+          <div class="draft-add-row">
+            <input type="text" id="linkLabel" placeholder="Label (optional)">
+            <input type="text" id="linkUrl" placeholder="https://… or C:\path">
+            <button type="button" class="btn btn-secondary btn-small" id="addLinkBtn">＋ Add</button>
+          </div>
+          <ul class="draft-list" id="linkList"></ul>
+        </div>
+
+        <label class="tags-field">
+          Tags <span class="hint">(comma separated)</span>
+          <input type="text" id="cardTags" placeholder="e.g. work, urgent, idea" autocomplete="off">
+          <div class="tag-suggestions" id="tagSuggestions" hidden></div>
+        </label>
+        <div class="form-row">
+          <label>
+            Due date
+            <input type="date" id="cardDueDate">
+          </label>
+          <label>
+            Priority
+            <select id="cardPriority">
+              <option value="">None</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Card accent color
+          <input type="hidden" id="cardColor" value="">
+          <div class="color-palette" id="cardColorPalette"></div>
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close="cardModal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Column editor modal -->
+  <div class="modal-overlay" id="columnModal" hidden>
+    <div class="modal modal-small">
+      <h2 id="columnModalTitle">New Column</h2>
+      <form id="columnForm">
+        <input type="hidden" id="columnId">
+        <label>
+          Column title <span class="required">*</span>
+          <input type="text" id="columnTitle" required maxlength="100" placeholder="Column name">
+        </label>
+        <label>
+          Column color
+          <input type="hidden" id="columnColor" value="">
+          <div class="color-palette" id="columnColorPalette"></div>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close="columnModal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Confirm dialog -->
+  <div class="modal-overlay" id="confirmModal" hidden>
+    <div class="modal modal-small">
+      <h2 id="confirmTitle">Are you sure?</h2>
+      <p id="confirmMessage"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="confirmCancel">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmOk">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Background dialog -->
+  <div class="modal-overlay" id="backgroundModal" hidden>
+    <div class="modal modal-small">
+      <h2>🖼 Background</h2>
+      <p id="bgStatus" class="hint"></p>
+      <p class="hint">Choose a preset or upload your own image.</p>
+      <div class="bg-presets" id="bgPresets"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="removeBgBtn">Remove</button>
+        <button type="button" class="btn btn-secondary" id="uploadBgBtn">Upload image</button>
+        <button type="button" class="btn btn-primary" data-close="backgroundModal">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recycle Bin dialog -->
+  <div class="modal-overlay" id="recycleModal" hidden>
+    <div class="modal modal-recycle">
+      <h2>🗑 Recycle Bin</h2>
+      <p id="recycleSummary"></p>
+      <div id="recycleList" class="recycle-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-close="recycleModal">Close</button>
+        <button type="button" class="btn btn-danger" id="emptyRecycleBtn">Empty Recycle Bin</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import dialog -->
+  <div class="modal-overlay" id="importModal" hidden>
+    <div class="modal modal-small">
+      <h2>Import tasks</h2>
+      <p id="importSummary"></p>
+      <p>How would you like to apply the imported data?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="importCancel">Cancel</button>
+        <button type="button" class="btn btn-secondary" id="importMerge">Merge</button>
+        <button type="button" class="btn btn-primary" id="importReplace">Replace</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="importFileInput" accept=".json,application/json" hidden>
+  <input type="file" id="bgFileInput" accept="image/*" hidden>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
