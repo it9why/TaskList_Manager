@@ -8,9 +8,13 @@ let board = null;
 const filters = { search: '', tag: null };
 const COMPLETED_VIS_KEY = 'taskManagerCompletedVisibility';
 const BACKGROUND_KEY = 'taskManagerBackground';
+const SORT_KEY = 'taskManagerColumnSorts';
 const shownCompleted = new Set();
 const expandedCards = new Set();
+const columnSorts = {};
 let dragState = { taskId: null, sourceColumnId: null, targetColumnId: null, index: null };
+let columnDragId = null;
+let columnDropTarget = null;
 let confirmCallback = null;
 let pendingImport = null;
 let toastTimer = null;
@@ -63,8 +67,22 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function formatDateTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function todayISO() {
   const d = new Date();
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function isoDateShift(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
 }
@@ -176,6 +194,7 @@ function normalizeTask(t) {
     completed: !!t.completed,
     createdAt: t.createdAt || new Date().toISOString(),
     updatedAt: t.updatedAt || new Date().toISOString(),
+    completedAt: typeof t.completedAt === 'string' ? t.completedAt : '',
     dueDate: t.dueDate || '',
     priority: ['low', 'medium', 'high'].includes(t.priority) ? t.priority : '',
     color: typeof t.color === 'string' ? t.color : '',
@@ -252,6 +271,54 @@ function saveCompletedVisibility() {
   } catch (e) { /* ignore */ }
 }
 
+function loadColumnSorts() {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (raw) Object.assign(columnSorts, JSON.parse(raw));
+  } catch (e) { /* ignore */ }
+}
+
+function saveColumnSorts() {
+  try { localStorage.setItem(SORT_KEY, JSON.stringify(columnSorts)); } catch (e) { /* ignore */ }
+}
+
+function openSortMenu(columnId, btnEl) {
+  const menu = document.getElementById('sortMenu');
+  const sortKey = columnSorts[columnId] || 'manual';
+  const options = [
+    { value: 'manual', label: 'Manual' },
+    { value: 'created-desc', label: 'Created (newest first)' },
+    { value: 'created-asc', label: 'Created (oldest first)' },
+    { value: 'updated-desc', label: 'Updated (newest first)' },
+    { value: 'updated-asc', label: 'Updated (oldest first)' }
+  ];
+  menu.innerHTML = '';
+  options.forEach(o => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sort-option' + (sortKey === o.value ? ' selected' : '');
+    b.textContent = o.label + (sortKey === o.value ? '  ✓' : '');
+    b.addEventListener('click', () => {
+      columnSorts[columnId] = o.value;
+      saveColumnSorts();
+      renderBoard();
+      closeSortMenu();
+    });
+    menu.appendChild(b);
+  });
+  const rect = btnEl.getBoundingClientRect();
+  const width = 200;
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.style.left = Math.max(4, Math.min(rect.right - width, window.innerWidth - width - 4)) + 'px';
+  menu.hidden = false;
+}
+
+function closeSortMenu() {
+  const menu = document.getElementById('sortMenu');
+  menu.hidden = true;
+  menu.innerHTML = '';
+}
+
 /* ---------- Filtering ---------- */
 
 function matchesTask(task) {
@@ -293,13 +360,19 @@ function renderColumn(col) {
 
   const showing = shownCompleted.has(col.id);
   const visible = col.tasks.filter(t => matchesTask(t) && (!t.completed || showing));
+  const sortKey = columnSorts[col.id] || 'manual';
+  if (sortKey === 'created-asc') visible.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  else if (sortKey === 'created-desc') visible.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  else if (sortKey === 'updated-asc') visible.sort((a, b) => (a.updatedAt || '').localeCompare(b.updatedAt || ''));
+  else if (sortKey === 'updated-desc') visible.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   const headerTint = accent ? hexToRgba(accent, 0.14) : '';
 
   sec.innerHTML =
-    '<header class="column-header"' + (headerTint ? ' style="background-color:' + headerTint + ';"' : '') + '>' +
+    '<header class="column-header" draggable="true"' + (headerTint ? ' style="background-color:' + headerTint + ';"' : '') + '>' +
       '<h2 class="column-title">' + escapeHtml(col.title) +
         ' <span class="column-count">' + visible.length + '</span></h2>' +
       '<div class="column-actions">' +
+        '<button class="icon-btn sort-btn' + (sortKey !== 'manual' ? ' active' : '') + '" data-action="open-sort-menu" data-column-id="' + col.id + '" title="Sort tasks" aria-label="Sort tasks">⇅</button>' +
         '<button class="icon-btn' + (showing ? ' active' : '') + '" data-action="toggle-completed-visibility" data-column-id="' + col.id + '" title="' + (showing ? 'Hide completed cards' : 'Show completed cards') + '" aria-label="Toggle completed cards visibility">☑</button>' +
         '<button class="icon-btn" data-action="edit-column" data-column-id="' + col.id + '" title="Rename column" aria-label="Rename column">✎</button>' +
         '<button class="icon-btn" data-action="delete-column" data-column-id="' + col.id + '" title="Delete column" aria-label="Delete column">🗑</button>' +
@@ -738,6 +811,104 @@ function resizeImage(img) {
   return canvas.toDataURL('image/jpeg', 0.85);
 }
 
+/* ---------- Summary ---------- */
+
+function openSummaryModal() {
+  document.getElementById('summaryStart').value = isoDateShift(-6);
+  document.getElementById('summaryEnd').value = isoDateShift(0);
+  renderSummary();
+  openModal('summaryModal');
+}
+
+function setSummaryPreset(days) {
+  document.getElementById('summaryStart').value = days === 0 ? isoDateShift(0) : isoDateShift(-(days - 1));
+  document.getElementById('summaryEnd').value = isoDateShift(0);
+  renderSummary();
+}
+
+function inPeriod(ts, start, end) {
+  if (!ts) return false;
+  const d = ts.slice(0, 10);
+  return d >= start && d <= end;
+}
+
+function renderSummary() {
+  const start = document.getElementById('summaryStart').value;
+  const end = document.getElementById('summaryEnd').value;
+  const statsEl = document.getElementById('summaryStats');
+  const listEl = document.getElementById('summaryList');
+  statsEl.innerHTML = '';
+  listEl.innerHTML = '';
+
+  if (!start || !end) {
+    listEl.innerHTML = '<p class="hint">Choose a date range.</p>';
+    return;
+  }
+
+  let createdCount = 0, updatedCount = 0, completedCount = 0, progressCount = 0;
+  const groups = {};
+
+  board.columns.forEach(col => {
+    col.tasks.forEach(task => {
+      const createdIn = inPeriod(task.createdAt, start, end);
+      const updatedIn = inPeriod(task.updatedAt, start, end);
+      const completedIn = inPeriod(task.completedAt, start, end);
+      const progressIn = (task.progress || []).filter(p => p.date && p.date >= start && p.date <= end).length;
+
+      if (createdIn) createdCount++;
+      if (updatedIn) updatedCount++;
+      if (completedIn) completedCount++;
+      progressCount += progressIn;
+
+      if (createdIn || updatedIn || completedIn || progressIn) {
+        if (!groups[col.id]) groups[col.id] = { title: col.title, items: [] };
+        groups[col.id].items.push({ task, createdIn, updatedIn, completedIn, progressIn });
+      }
+    });
+  });
+
+  statsEl.innerHTML =
+    '<div class="stat"><span class="stat-num">' + createdCount + '</span><span class="stat-label">Created</span></div>' +
+    '<div class="stat"><span class="stat-num">' + updatedCount + '</span><span class="stat-label">Updated</span></div>' +
+    '<div class="stat"><span class="stat-num">' + completedCount + '</span><span class="stat-label">Completed</span></div>' +
+    '<div class="stat"><span class="stat-num">' + progressCount + '</span><span class="stat-label">Progress notes</span></div>';
+
+  const groupIds = Object.keys(groups);
+  if (groupIds.length === 0) {
+    listEl.innerHTML = '<p class="hint">No updates in this period.</p>';
+    return;
+  }
+
+  groupIds.forEach(colId => {
+    const g = groups[colId];
+    const head = document.createElement('div');
+    head.className = 'summary-group-head';
+    head.textContent = g.title;
+    listEl.appendChild(head);
+
+    g.items.forEach(item => {
+      const badges = [];
+      if (item.createdIn) badges.push('created');
+      if (item.updatedIn) badges.push('updated');
+      if (item.completedIn) badges.push('completed');
+      if (item.progressIn) badges.push(item.progressIn + ' note' + (item.progressIn > 1 ? 's' : ''));
+
+      const meta = [];
+      if (item.createdIn) meta.push('Created ' + formatDateTime(item.task.createdAt));
+      if (item.updatedIn) meta.push('Updated ' + formatDateTime(item.task.updatedAt));
+      if (item.completedIn) meta.push('Completed ' + formatDateTime(item.task.completedAt));
+
+      const row = document.createElement('div');
+      row.className = 'summary-item';
+      row.innerHTML =
+        '<span class="summary-title">' + escapeHtml(item.task.title) + '</span>' +
+        '<span class="summary-badges">' + badges.map(b => '<span class="summary-badge">' + b + '</span>').join('') + '</span>' +
+        (meta.length ? '<span class="summary-meta">' + escapeHtml(meta.join(' · ')) + '</span>' : '');
+      listEl.appendChild(row);
+    });
+  });
+}
+
 /* ---------- Actions ---------- */
 
 function findTask(taskId) {
@@ -751,8 +922,10 @@ function findTask(taskId) {
 function toggleComplete(taskId) {
   const found = findTask(taskId);
   if (!found) return;
+  const now = new Date().toISOString();
   found.task.completed = !found.task.completed;
-  found.task.updatedAt = new Date().toISOString();
+  found.task.updatedAt = now;
+  found.task.completedAt = found.task.completed ? now : '';
   saveBoard();
   renderBoard();
 }
@@ -916,12 +1089,13 @@ function handleCardSubmit(e) {
   } else {
     const col = board.columns.find(c => c.id === columnId);
     if (!col) return;
-    col.tasks.push({
+    col.tasks.unshift({
       id: generateId('task'),
       title,
       description: document.getElementById('cardDescription').value.trim(),
       tags,
       completed: false,
+      completedAt: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       dueDate: document.getElementById('cardDueDate').value,
@@ -987,6 +1161,30 @@ function resetDragState() {
   dragState = { taskId: null, sourceColumnId: null, targetColumnId: null, index: null };
 }
 
+function clearColumnInsertIndicators() {
+  document.querySelectorAll('.column.drag-insert-left, .column.drag-insert-right')
+    .forEach(el => el.classList.remove('drag-insert-left', 'drag-insert-right'));
+}
+
+function resetColumnDrag() {
+  document.querySelectorAll('.column.dragging-column').forEach(el => el.classList.remove('dragging-column'));
+  columnDragId = null;
+  columnDropTarget = null;
+}
+
+function reorderColumn(columnId, target) {
+  const srcIdx = board.columns.findIndex(c => c.id === columnId);
+  if (srcIdx === -1) return;
+  const tgtIdx = board.columns.findIndex(c => c.id === target.id);
+  if (tgtIdx === -1 || srcIdx === tgtIdx) return;
+  let insertIdx = target.after ? tgtIdx + 1 : tgtIdx;
+  const col = board.columns.splice(srcIdx, 1)[0];
+  if (srcIdx < insertIdx) insertIdx--;
+  board.columns.splice(insertIdx, 0, col);
+  saveBoard();
+  renderBoard();
+}
+
 /* ---------- Event binding ---------- */
 
 function bindEvents() {
@@ -1018,6 +1216,8 @@ function bindEvents() {
       renderBoard();
     } else if (action === 'toggle-completed-visibility') {
       toggleShownCompleted(columnId);
+    } else if (action === 'open-sort-menu') {
+      openSortMenu(columnId, el);
     } else if (action === 'edit-column') {
       openColumnModal(columnId);
     } else if (action === 'delete-column') {
@@ -1040,21 +1240,44 @@ function bindEvents() {
 
   boardEl.addEventListener('dragstart', (e) => {
     const card = e.target.closest('.card[draggable="true"]');
-    if (!card) return;
-    dragState.taskId = card.dataset.taskId;
-    dragState.sourceColumnId = card.closest('.column').dataset.columnId;
+    if (card) {
+      dragState.taskId = card.dataset.taskId;
+      dragState.sourceColumnId = card.closest('.column').dataset.columnId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragState.taskId);
+      card.classList.add('dragging');
+      return;
+    }
+    const header = e.target.closest('.column-header[draggable="true"]');
+    if (!header) return;
+    if (e.target.closest('button, select, input, textarea, a')) { e.preventDefault(); return; }
+    columnDragId = header.closest('.column').dataset.columnId;
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', dragState.taskId);
-    card.classList.add('dragging');
+    e.dataTransfer.setData('text/plain', 'column:' + columnDragId);
+    header.closest('.column').classList.add('dragging-column');
   });
 
   boardEl.addEventListener('dragend', () => {
     clearColumnHighlights();
     clearDropPlaceholders();
+    clearColumnInsertIndicators();
     resetDragState();
+    resetColumnDrag();
   });
 
   boardEl.addEventListener('dragover', (e) => {
+    if (columnDragId) {
+      const col = e.target.closest('.column');
+      if (!col || col.dataset.columnId === columnDragId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearColumnInsertIndicators();
+      const rect = col.getBoundingClientRect();
+      const after = e.clientX > rect.left + rect.width / 2;
+      col.classList.add(after ? 'drag-insert-right' : 'drag-insert-left');
+      columnDropTarget = { id: col.dataset.columnId, after };
+      return;
+    }
     const list = e.target.closest('.task-list');
     if (!list) return;
     e.preventDefault();
@@ -1072,6 +1295,13 @@ function bindEvents() {
   });
 
   boardEl.addEventListener('drop', (e) => {
+    if (columnDragId && columnDropTarget) {
+      e.preventDefault();
+      reorderColumn(columnDragId, columnDropTarget);
+      clearColumnInsertIndicators();
+      resetColumnDrag();
+      return;
+    }
     const list = e.target.closest('.task-list');
     if (!list) return;
     e.preventDefault();
@@ -1101,6 +1331,13 @@ function bindHeaderEvents() {
     document.getElementById('bgFileInput').click();
   });
   document.getElementById('bgFileInput').addEventListener('change', handleBgFile);
+
+  document.getElementById('summaryBtn').addEventListener('click', openSummaryModal);
+  document.getElementById('summaryStart').addEventListener('change', renderSummary);
+  document.getElementById('summaryEnd').addEventListener('change', renderSummary);
+  document.querySelectorAll('#summaryModal [data-preset]').forEach(btn => {
+    btn.addEventListener('click', () => setSummaryPreset(parseInt(btn.dataset.preset, 10)));
+  });
 
   document.getElementById('recycleBinBtn').addEventListener('click', openRecycleBin);
   document.getElementById('recycleList').addEventListener('click', (e) => {
@@ -1171,10 +1408,17 @@ function bindHeaderEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      closeSortMenu();
       document.querySelectorAll('.modal-overlay:not([hidden])').forEach(m => { m.hidden = true; });
       confirmCallback = null;
       pendingImport = null;
     }
+  });
+
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('sortMenu');
+    if (menu.hidden) return;
+    if (!menu.contains(e.target) && !e.target.closest('.sort-btn')) closeSortMenu();
   });
 }
 
@@ -1275,6 +1519,7 @@ function init() {
   }
   board = loadBoard();
   loadCompletedVisibility();
+  loadColumnSorts();
   currentBackground = loadBackground();
   applyBackground(currentBackground);
   buildPalette('cardColorPalette', 'cardColor');

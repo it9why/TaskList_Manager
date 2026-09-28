@@ -19,6 +19,7 @@
         <option value="sepia">Sepia</option>
       </select>
       <button id="backgroundBtn" class="btn btn-secondary" title="Change background">🖼 Background</button>
+      <button id="summaryBtn" class="btn btn-secondary" title="Summary of updates">📊 Summary</button>
       <button id="recycleBinBtn" class="btn btn-secondary" title="Recycle Bin">🗑 Recycle</button>
       <button id="addColumnBtn" class="btn btn-secondary" title="Add a column">＋ Column</button>
       <button id="exportBtn" class="btn btn-secondary" title="Export tasks to JSON">⬇ Export</button>
@@ -153,6 +154,27 @@
     </div>
   </div>
 
+  <!-- Summary dialog -->
+  <div class="modal-overlay" id="summaryModal" hidden>
+    <div class="modal modal-summary">
+      <h2>📊 Summary</h2>
+      <div class="summary-period">
+        <label>From <input type="date" id="summaryStart"></label>
+        <label>To <input type="date" id="summaryEnd"></label>
+      </div>
+      <div class="summary-presets">
+        <button type="button" class="btn btn-secondary btn-small" data-preset="0">Today</button>
+        <button type="button" class="btn btn-secondary btn-small" data-preset="7">Last 7 days</button>
+        <button type="button" class="btn btn-secondary btn-small" data-preset="30">Last 30 days</button>
+      </div>
+      <div class="summary-stats" id="summaryStats"></div>
+      <div class="summary-list" id="summaryList"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" data-close="summaryModal">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Recycle Bin dialog -->
   <div class="modal-overlay" id="recycleModal" hidden>
     <div class="modal modal-recycle">
@@ -182,6 +204,8 @@
 
   <input type="file" id="importFileInput" accept=".json,application/json" hidden>
   <input type="file" id="bgFileInput" accept="image/*" hidden>
+
+  <div class="sort-menu" id="sortMenu" hidden></div>
 
   <div class="toast" id="toast"></div>
 
